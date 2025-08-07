@@ -25,12 +25,13 @@ Here's a brief overview of how it works:
      Instead of comparing *all against all*, it selects a **"base" element** 
      (dominant) and evaluates only *"base vs. others"*. 
 
-2. **Macro-categories (A and B)**  
-   - Often, before analyzing sub-factors in detail, there are *macro-categories* 
+2. **Macro-categories with Non-linear Scaling**  
+   - Before analyzing sub-factors in detail, there are *macro-categories* 
      (in our case, "A" and "B"), such as the question:
      "Are we managing a project with a large amount of data (A) or not (B)?"
-   - Each macro-category can be assigned a **weight** (e.g., 0.5 for A, 0.5 for B) 
-     that defines its overall importance.
+   - Each macro-category can be assigned a **scaling factor** that affects
+     the priorities of sub-factors belonging to that category in a non-linear way.
+   - The scaling is applied through a diagonal matrix multiplication before normalization.
 
 3. **Sub-factors**  
    - For each macro-category, **sub-factors** (more specific criteria) 
@@ -45,18 +46,16 @@ Here's a brief overview of how it works:
      **geometric mean** of each pairwise comparison (as recommended by Saaty for AHP).
 
 5. **DLM and final scores**  
-   - Once the priorities of the sub-factors are calculated, 
-     and the macro-category weights are combined, 
+   - Once the priorities of the sub-factors are calculated with proper macro-category scaling, 
      we can assign each DLM a **total score** 
-     by computing the weighted sum of the DLM values for each sub-factor 
-     (e.g., [DLM value for SF1]*[priority of SF1] + …).  
+     by computing the weighted sum of the DLM values for each sub-factor.  
    - The tool displays the **final ranking** and provides summary charts 
      (a *Bar Chart* and a *Radar Chart*) for better result interpretation.
 
 **Getting Started**:  
 - Upload an *Excel/CSV* file containing the DLMs and their sub-factors.  
-- Set the number of interviews, macro-category weights, and for each interview, 
-  enter the comparisons "base vs. others".  
+- Set the number of interviews, macro-category assignments and scaling factors.
+- For each interview, enter the comparisons "base vs. others".  
 - Press the button to calculate the final results.
 """
 
@@ -120,6 +119,47 @@ def calculate_ahp_express_prior(base_index, values):
     priorities = [r / denom for r in reciprocals]
     
     return priorities
+
+
+def apply_macrocategory_scaling(priorities_A, priorities_B, sottofattori, 
+                               macro_assignments, scaling_factors):
+    """
+    CORRECTED IMPLEMENTATION: Apply non-linear scaling using diagonal matrix multiplication
+    
+    Args:
+        priorities_A: Priority vector for category A
+        priorities_B: Priority vector for category B  
+        sottofattori: List of sub-factors
+        macro_assignments: Dict mapping sub-factor to macro-category ('A' or 'B')
+        scaling_factors: Dict with scaling factors for each macro-category
+    
+    Returns:
+        Scaled and normalized priority vector
+    """
+    n_factors = len(sottofattori)
+    
+    # Create the base priority vector (combining A and B priorities based on assignments)
+    base_priorities = []
+    for i, sf in enumerate(sottofattori):
+        if macro_assignments[sf] == 'A':
+            base_priorities.append(priorities_A[i])
+        else:  # Category B
+            base_priorities.append(priorities_B[i])
+    
+    # Create diagonal scaling matrix M
+    diagonal_matrix = np.zeros((n_factors, n_factors))
+    for i, sf in enumerate(sottofattori):
+        category = macro_assignments[sf]
+        scale_factor = scaling_factors[category]
+        diagonal_matrix[i, i] = scale_factor
+    
+    # Apply matrix multiplication: M * v (where v is the priority vector)
+    base_vector = np.array(base_priorities)
+    scaled_vector = np.dot(diagonal_matrix, base_vector)
+    
+    # Normalize the scaled vector
+    scaled_list = scaled_vector.tolist()
+    return normalize_vector(scaled_list)
 
 
 def media_geometrica_custom(valori, pesi=None):
@@ -211,39 +251,46 @@ def create_radar_chart(df, title="Radar Chart"):
     st.pyplot(fig)
 
 
-def sensitivity_anal(df_dlm, sottofattori, priA_norm, priB_norm):
+def sensitivity_analysis_corrected(df_dlm, sottofattori, priorities_A, priorities_B, 
+                                 macro_assignments, base_scaling_factors):
     """
-    This function performs sensitivity analysis by varying the weight of cat. A from 0 to 1.
-    Shows:
-    - a line graph showing the variation of the scores by variation of the weight of cat.A
-    - a table showing statistics (min, max, delta) for each DLM
-    - dynamic comments explaining the meaning of each value
+    CORRECTED: Sensitivity analysis with proper macro-category scaling
     """
-    st.header("📊 Sensitivity Analysis")
+    st.header("📊 Sensitivity Analysis (Corrected with Macro-category Scaling)")
     
-    # Create weight variations
-    pA_values = np.linspace(0, 1, 21)
+    # Create scaling factor variations for both categories
+    scale_A_values = np.linspace(0.1, 2.0, 20)
+    scale_B_values = np.linspace(0.1, 2.0, 20)
+    
     sensitivity_scores = {dlm: [] for dlm in df_dlm[df_dlm.columns[0]].tolist()}
     
-    # Calculate scores for each weight combination
-    for pA in pA_values:
-        pB = 1 - pA
-        # Calculate combined vector for subfactors
-        combined = [priA_norm[i] * pA + priB_norm[i] * pB for i in range(len(sottofattori))]
-        combined_norm = normalize_vector(combined)
+    # Test different combinations of scaling factors
+    st.subheader("🔄 Score Variation with Scaling Factor Changes")
+    
+    # Vary scaling factor A while keeping B constant
+    for scale_A in scale_A_values:
+        scaling_factors = {
+            'A': scale_A,
+            'B': base_scaling_factors['B']
+        }
+        
+        # Apply corrected scaling
+        final_priorities = apply_macrocategory_scaling(
+            priorities_A, priorities_B, sottofattori, 
+            macro_assignments, scaling_factors
+        )
         
         # Calculate scores for each DLM
         for index, row in df_dlm.iterrows():
-            score = sum(float(row[sf]) * combined_norm[i] for i, sf in enumerate(sottofattori))
+            score = sum(float(row[sf]) * final_priorities[i] for i, sf in enumerate(sottofattori))
             dlm_name = row[df_dlm.columns[0]]
             sensitivity_scores[dlm_name].append(score)
     
     # Create DataFrame for sensitivity analysis
-    df_sens = pd.DataFrame(sensitivity_scores, index=pA_values)
-    df_sens.index.name = "Cat.A weight"
+    df_sens = pd.DataFrame(sensitivity_scores, index=scale_A_values)
+    df_sens.index.name = "Category A Scaling Factor"
     
     # Plot sensitivity analysis
-    st.subheader("🔄 Score Variation of DLMs")
     fig, ax = plt.subplots(figsize=(12, 7))
     
     colors = plt.cm.tab10(np.linspace(0, 1, len(df_sens.columns)))
@@ -251,72 +298,19 @@ def sensitivity_anal(df_dlm, sottofattori, priA_norm, priB_norm):
         ax.plot(df_sens.index, df_sens[dlm], marker='o', label=dlm, 
                 linewidth=2, markersize=4, color=colors[idx])
     
-    ax.set_xlabel("Weight of Category A", fontsize=12)
+    ax.set_xlabel("Scaling Factor for Category A", fontsize=12)
     ax.set_ylabel("DLM Score", fontsize=12)
-    ax.set_title("Sensitivity of DLM Scores to Category A Weight", fontsize=14, fontweight='bold')
+    ax.set_title("Sensitivity of DLM Scores to Category A Scaling Factor", fontsize=14, fontweight='bold')
     ax.grid(True, alpha=0.3)
     ax.legend(loc='best')
     
-    # Add vertical line at current weight
-    current_weight = st.session_state.get('current_peso_A', 0.5)
-    ax.axvline(x=current_weight, color='red', linestyle='--', alpha=0.5, 
-               label=f'Current weight ({current_weight:.2f})')
+    # Add vertical line at current scaling factor
+    current_scale = base_scaling_factors['A']
+    ax.axvline(x=current_scale, color='red', linestyle='--', alpha=0.5, 
+               label=f'Current scaling ({current_scale:.2f})')
     
     plt.tight_layout()
     st.pyplot(fig)
-    
-    # Calculate statistics
-    stats = {}
-    for dlm, scores in sensitivity_scores.items():
-        stats[dlm] = {
-            "Min": np.min(scores),
-            "Max": np.max(scores),
-            "Delta": np.max(scores) - np.min(scores),
-            "StdDev": np.std(scores),
-            "Mean": np.mean(scores)
-        }
-    
-    df_stats = pd.DataFrame(stats).T
-    
-    st.subheader("📈 Sensitivity Statistics")
-    st.dataframe(df_stats.style.format({
-        "Min": "{:.4f}",
-        "Max": "{:.4f}",
-        "Delta": "{:.4f}",
-        "StdDev": "{:.4f}",
-        "Mean": "{:.4f}"
-    }))
-    
-    # Detailed comments
-    st.subheader("💡 Interpretation of Sensitivity Analysis")
-    
-    # Find most and least sensitive DLMs
-    most_sensitive = df_stats['Delta'].idxmax()
-    least_sensitive = df_stats['Delta'].idxmin()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info(f"**Most Sensitive DLM:** {most_sensitive}\n"
-                f"- Delta: {df_stats.loc[most_sensitive, 'Delta']:.4f}\n"
-                f"- This model is highly affected by the choice of category weights")
-    
-    with col2:
-        st.success(f"**Most Stable DLM:** {least_sensitive}\n"
-                   f"- Delta: {df_stats.loc[least_sensitive, 'Delta']:.4f}\n"
-                   f"- This model shows consistent performance regardless of category weights")
-    
-    # Individual DLM analysis
-    st.write("### Detailed Analysis per DLM:")
-    for dlm, row in df_stats.iterrows():
-        sensitivity_level = "high" if row['Delta'] > df_stats['Delta'].mean() else "low"
-        color = "🔴" if sensitivity_level == "high" else "🟢"
-        
-        st.write(f"{color} **{dlm}**")
-        st.write(f"   - Score range: [{row['Min']:.3f}, {row['Max']:.3f}]")
-        st.write(f"   - Variability (Delta): {row['Delta']:.3f} ({sensitivity_level} sensitivity)")
-        st.write(f"   - Standard deviation: {row['StdDev']:.3f}")
-        st.write(f"   - Average score: {row['Mean']:.3f}")
     
     return df_sens
 
@@ -350,10 +344,10 @@ def validate_consistency(comparisons):
 
 
 def main():
-    st.set_page_config(page_title="AHP-Express Tool", page_icon="📊", layout="wide")
+    st.set_page_config(page_title="AHP-Express Tool Corrected", page_icon="📊", layout="wide")
     
     st.markdown(testo_introduzione, unsafe_allow_html=True)
-    st.title("🎯 AHP-Express Tool to Compare DLMs")
+    st.title("🎯 AHP-Express Tool to Compare DLMs (Corrected Version)")
     
     scala_saaty = saaty_scale_description()
     
@@ -379,34 +373,65 @@ def main():
     
     st.success(f"✅ Loaded {len(dlm_names)} DLMs with {len(sottofattori)} sub-factors")
     
-    # Step 2: Configure interviews and weights
-    st.header("2. ⚙️ Configure Interviews and Categories")
+    # Step 2: Configure macro-categories assignments and scaling
+    st.header("2. ⚙️ Configure Macro-Categories and Scaling Factors")
     
     col1, col2 = st.columns(2)
+    
     with col1:
-        st.subheader("Macro-Categories")
-        usa_pesi_macro = st.checkbox("Enable macro-category weights", value=True)
-        if usa_pesi_macro:
-            peso_A = st.slider("Weight for Category A (Large Data)", 
-                              min_value=0.0, max_value=1.0, value=0.5, step=0.01)
-            peso_B = 1 - peso_A
-            st.write(f"Weight for Category B (Old Data): {peso_B:.2f}")
-            st.session_state['current_peso_A'] = peso_A
-        else:
-            peso_A, peso_B = 0.5, 0.5
-            st.session_state['current_peso_A'] = 0.5
+        st.subheader("Macro-Category Assignments")
+        st.write("Assign each sub-factor to a macro-category:")
+        
+        macro_assignments = {}
+        for sf in sottofattori:
+            macro_assignments[sf] = st.selectbox(
+                f"Sub-factor: {sf}",
+                options=['A', 'B'],
+                key=f"macro_{sf}",
+                help=f"Select macro-category for {sf}"
+            )
     
     with col2:
-        st.subheader("Interviews")
-        num_interviste = st.number_input("Number of Interviews", 
-                                         min_value=1, max_value=10, value=1)
-        st.info(f"You will need to provide {num_interviste} set(s) of comparisons for each category")
+        st.subheader("Scaling Factors")
+        st.write("Set scaling factors for each macro-category:")
+        
+        scaling_factors = {}
+        scaling_factors['A'] = st.slider(
+            "Scaling Factor for Category A",
+            min_value=0.1, max_value=2.0, value=1.0, step=0.1,
+            help="Higher values increase the importance of Category A sub-factors"
+        )
+        scaling_factors['B'] = st.slider(
+            "Scaling Factor for Category B", 
+            min_value=0.1, max_value=2.0, value=1.0, step=0.1,
+            help="Higher values increase the importance of Category B sub-factors"
+        )
     
-    # Step 3: AHP-Express comparisons
-    st.header("3. 🔄 AHP-Express Comparisons (Saaty's Scale)")
+    # Display macro-category summary
+    st.subheader("📋 Macro-Category Summary")
+    category_summary = {}
+    for cat in ['A', 'B']:
+        factors_in_cat = [sf for sf, assigned_cat in macro_assignments.items() if assigned_cat == cat]
+        category_summary[f"Category {cat}"] = {
+            "Sub-factors": factors_in_cat,
+            "Count": len(factors_in_cat),
+            "Scaling Factor": scaling_factors[cat]
+        }
+    
+    for cat_name, info in category_summary.items():
+        st.write(f"**{cat_name}** (Scaling: {info['Scaling Factor']:.1f}): {', '.join(info['Sub-factors'])}")
+    
+    # Step 3: Configure interviews
+    st.header("3. 🎤 Configure Interviews")
+    num_interviste = st.number_input("Number of Interviews", 
+                                     min_value=1, max_value=10, value=1)
+    st.info(f"You will need to provide {num_interviste} set(s) of comparisons for each category")
+    
+    # Step 4: AHP-Express comparisons
+    st.header("4. 🔄 AHP-Express Comparisons (Saaty's Scale)")
     
     # Category A comparisons
-    st.subheader("📊 Category A - Many Data")
+    st.subheader("📊 Category A Comparisons")
     base_sottofattore_A = st.selectbox("Select reference sub-factor for Category A", 
                                        sottofattori, key="baseA")
     
@@ -436,7 +461,7 @@ def main():
                     comparisons_A[sf].append(val)
     
     # Category B comparisons
-    st.subheader("📊 Category B - Old Data")
+    st.subheader("📊 Category B Comparisons")
     base_sottofattore_B = st.selectbox("Select reference sub-factor for Category B", 
                                        sottofattori, key="baseB")
     
@@ -466,8 +491,8 @@ def main():
                     comparisons_B[sf].append(val)
     
     # Calculate button
-    if st.button("🚀 Calculate Priorities and Analysis", type="primary"):
-        with st.spinner("Calculating priorities..."):
+    if st.button("🚀 Calculate Priorities and Analysis (Corrected)", type="primary"):
+        with st.spinner("Calculating priorities with corrected macro-category scaling..."):
             
             # Validate consistency
             if not validate_consistency(comparisons_A) or not validate_consistency(comparisons_B):
@@ -475,7 +500,7 @@ def main():
                 st.stop()
             
             # Category A priority calculation
-            st.header("4. 📊 Results and Analysis")
+            st.header("5. 📊 Results and Analysis (Corrected Implementation)")
             
             # Aggregate comparisons using geometric mean
             base_index_A = sottofattori.index(base_sottofattore_A)
@@ -494,13 +519,13 @@ def main():
             priB = calculate_ahp_express_prior(base_index_B, final_ratios_B)
             priB_norm = normalize_vector(priB)
             
-            # Combine priorities
-            final_subfactors = [priA_norm[i] * peso_A + priB_norm[i] * peso_B 
-                               for i in range(len(sottofattori))]
-            final_subfactors = normalize_vector(final_subfactors)
+            # CORRECTED: Apply macro-category scaling using diagonal matrix
+            final_priorities = apply_macrocategory_scaling(
+                priA_norm, priB_norm, sottofattori, macro_assignments, scaling_factors
+            )
             
             # Display priority vectors
-            st.subheader("📋 Priority Vectors")
+            st.subheader("📋 Priority Vectors (Corrected)")
             
             col1, col2, col3 = st.columns(3)
             
@@ -508,7 +533,8 @@ def main():
                 st.write("**Category A Priorities**")
                 df_priA = pd.DataFrame({
                     "Sub-factor": sottofattori, 
-                    "Priority": priA_norm
+                    "Priority": priA_norm,
+                    "Macro-Cat": [macro_assignments[sf] for sf in sottofattori]
                 })
                 st.dataframe(df_priA.style.format({"Priority": "{:.4f}"}))
             
@@ -516,29 +542,34 @@ def main():
                 st.write("**Category B Priorities**")
                 df_priB = pd.DataFrame({
                     "Sub-factor": sottofattori, 
-                    "Priority": priB_norm
+                    "Priority": priB_norm,
+                    "Macro-Cat": [macro_assignments[sf] for sf in sottofattori]
                 })
                 st.dataframe(df_priB.style.format({"Priority": "{:.4f}"}))
             
             with col3:
-                st.write("**Combined Priorities**")
+                st.write("**Final Scaled Priorities**")
                 df_final = pd.DataFrame({
                     "Sub-factor": sottofattori, 
-                    "Final Priority": final_subfactors
+                    "Scaled Priority": final_priorities,
+                    "Scaling Factor": [scaling_factors[macro_assignments[sf]] for sf in sottofattori]
                 })
-                st.dataframe(df_final.style.format({"Final Priority": "{:.4f}"}))
+                st.dataframe(df_final.style.format({
+                    "Scaled Priority": "{:.4f}",
+                    "Scaling Factor": "{:.1f}"
+                }))
             
             # Calculate DLM scores
             data_scores = []
             for _, row in df_dlm.iterrows():
-                score = sum(float(row[sf]) * final_subfactors[i] 
+                score = sum(float(row[sf]) * final_priorities[i] 
                            for i, sf in enumerate(sottofattori))
                 data_scores.append(score)
             
             df_dlm['Final_Score'] = data_scores
             
             # Display rankings
-            st.subheader("🏆 DLM Rankings")
+            st.subheader("🏆 DLM Rankings (with Corrected Scaling)")
             data_sorted = df_dlm.sort_values(by="Final_Score", ascending=False).copy()
             data_sorted['Rank'] = range(1, len(data_sorted) + 1)
             
@@ -564,7 +595,7 @@ def main():
                 create_bar_chart(
                     data_sorted[df_dlm.columns[0]].tolist(), 
                     data_sorted["Final_Score"].tolist(),
-                    title="DLM Final Scores Comparison"
+                    title="DLM Final Scores Comparison (Corrected Scaling)"
                 )
             
             with tab2:
@@ -594,21 +625,34 @@ def main():
                 # Show priority distribution
                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
                 
-                # Pie chart for final priorities
-                colors = plt.cm.Set3(np.linspace(0, 1, len(sottofattori)))
-                ax1.pie(final_subfactors, labels=sottofattori, autopct='%1.1f%%', 
-                       colors=colors, startangle=90)
-                ax1.set_title("Final Priority Distribution", fontsize=12, fontweight='bold')
+                # Pie chart for final priorities with macro-category colors
+                colors_A = plt.cm.Blues(np.linspace(0.3, 0.8, sum(1 for sf in sottofattori if macro_assignments[sf] == 'A')))
+                colors_B = plt.cm.Reds(np.linspace(0.3, 0.8, sum(1 for sf in sottofattori if macro_assignments[sf] == 'B')))
                 
-                # Comparison of priorities between categories
+                pie_colors = []
+                color_A_idx, color_B_idx = 0, 0
+                for sf in sottofattori:
+                    if macro_assignments[sf] == 'A':
+                        pie_colors.append(colors_A[color_A_idx])
+                        color_A_idx += 1
+                    else:
+                        pie_colors.append(colors_B[color_B_idx])
+                        color_B_idx += 1
+                
+                ax1.pie(final_priorities, labels=sottofattori, autopct='%1.1f%%', 
+                       colors=pie_colors, startangle=90)
+                ax1.set_title("Final Scaled Priority Distribution", fontsize=12, fontweight='bold')
+                
+                # Comparison of priorities with scaling factors
                 x = np.arange(len(sottofattori))
-                width = 0.35
+                width = 0.25
                 
-                ax2.bar(x - width/2, priA_norm, width, label='Category A', alpha=0.8)
-                ax2.bar(x + width/2, priB_norm, width, label='Category B', alpha=0.8)
+                ax2.bar(x - width, priA_norm, width, label='Category A', alpha=0.8)
+                ax2.bar(x, priB_norm, width, label='Category B', alpha=0.8)
+                ax2.bar(x + width, final_priorities, width, label='Final Scaled', alpha=0.8)
                 ax2.set_xlabel('Sub-factors')
                 ax2.set_ylabel('Priority')
-                ax2.set_title('Priority Comparison between Categories', fontsize=12, fontweight='bold')
+                ax2.set_title('Priority Comparison: Before & After Scaling', fontsize=12, fontweight='bold')
                 ax2.set_xticks(x)
                 ax2.set_xticklabels(sottofattori, rotation=45, ha='right')
                 ax2.legend()
@@ -617,8 +661,9 @@ def main():
                 plt.tight_layout()
                 st.pyplot(fig)
             
-            # Sensitivity Analysis
-            sensitivity_anal(df_dlm, sottofattori, priA_norm, priB_norm)
+            # Corrected Sensitivity Analysis
+            sensitivity_analysis_corrected(df_dlm, sottofattori, priA_norm, priB_norm, 
+                                          macro_assignments, scaling_factors)
             
             # Export results
             st.subheader("💾 Export Results")
@@ -630,15 +675,23 @@ def main():
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     data_sorted.to_excel(writer, sheet_name='Rankings', index=False)
-                    df_final.to_excel(writer, sheet_name='Priorities', index=False)
+                    df_final.to_excel(writer, sheet_name='Final_Priorities', index=False)
                     df_priA.to_excel(writer, sheet_name='Category_A', index=False)
                     df_priB.to_excel(writer, sheet_name='Category_B', index=False)
+                    
+                    # Add macro-category assignments
+                    df_assignments = pd.DataFrame({
+                        'Sub-factor': sottofattori,
+                        'Macro-Category': [macro_assignments[sf] for sf in sottofattori],
+                        'Scaling Factor': [scaling_factors[macro_assignments[sf]] for sf in sottofattori]
+                    })
+                    df_assignments.to_excel(writer, sheet_name='Macro_Categories', index=False)
                 
                 output.seek(0)
                 st.download_button(
                     label="📥 Download Results (Excel)",
                     data=output,
-                    file_name="ahp_express_results.xlsx",
+                    file_name="ahp_express_corrected_results.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             
@@ -648,34 +701,43 @@ def main():
                 st.download_button(
                     label="📥 Download Rankings (CSV)",
                     data=csv,
-                    file_name="dlm_rankings.csv",
+                    file_name="dlm_rankings_corrected.csv",
                     mime="text/csv"
                 )
             
-            # Methodology note
-            with st.expander("📚 Methodology Notes"):
+            # Corrected Methodology note
+            with st.expander("📚 Corrected Methodology Notes"):
                 st.markdown("""
-                ### AHP-Express Methodology
+                ### AHP-Express with Corrected Macro-Category Scaling
                 
-                This tool implements the **AHP-Express** method, which is a simplified version of the 
-                traditional Analytic Hierarchy Process (AHP) developed by Thomas Saaty.
+                This corrected tool implements the **AHP-Express** method with proper 
+                non-linear macro-category scaling using diagonal matrix multiplication.
                 
-                **Key differences from traditional AHP:**
-                - **Reduced comparisons:** Instead of n(n-1)/2 comparisons, only n-1 comparisons are needed
-                - **Reference element:** A dominant element is selected as reference
-                - **Maintained consistency:** The method preserves the mathematical properties of AHP
+                **Key corrections implemented:**
+                
+                1. **Macro-category Assignment**: Each sub-factor is explicitly assigned to a macro-category
+                2. **Diagonal Matrix Scaling**: Instead of linear weighted combination, we use:
+                   - Create diagonal matrix M where M[i,i] = scaling_factor[macro_category[i]]
+                   - Apply scaling: scaled_vector = M × priority_vector
+                   - Then normalize: final_priorities = scaled_vector / sum(scaled_vector)
                 
                 **Priority calculation formula:**
-                For element j compared to reference element r:
-                - Priority(j) = (1/a(r,j)) / Σ(1/a(r,k)) for all k
+                - For sub-factor i in macro-category k with scaling factor s_k:
+                - Scaled_Priority(i) = Original_Priority(i) × s_k
+                - Final_Priority(i) = Scaled_Priority(i) / Σ(Scaled_Priority(j)) for all j
                 
-                **Aggregation method:**
-                - Multiple interviews are combined using the geometric mean (Saaty's recommendation)
-                - Category priorities are combined using weighted arithmetic mean
+                **Mathematical representation:**
+                ```
+                If v = [v0, v1, ..., vN-1] is the priority vector
+                And M is the diagonal matrix with scaling factors
+                Then: final_priorities = normalize(M × v)
+                ```
                 
-                **Validation:**
-                - The sum of priorities always equals 1 (normalized)
-                - Consistency is implicitly maintained through the reference element approach
+                **Benefits of this approach:**
+                - Non-linear scaling preserves the relative importance within categories
+                - Allows fine-tuning of macro-category influence
+                - Maintains mathematical consistency with AHP principles
+                - Provides more control over decision-making process
                 """)
 
 
