@@ -100,7 +100,7 @@ def normalize_vector(v):
 
 def calculate_ahp_express_prior(base_index, values):
     """
-    This function calculates the priority vector according to AHP-express
+    CORRECTED: This function calculates the priority vector according to AHP-express
     The correct formula for AHP-express is:
     - For the base element: pr_base = 1 / Σ_k (1/a(base,k))
     - For other elements j: pr_j = (1/a(base,j)) / Σ_k (1/a(base,k))
@@ -120,65 +120,40 @@ def calculate_ahp_express_prior(base_index, values):
     return priorities
 
 
-def apply_scaling_factors(priorities_A, priorities_B, sottofattori, 
-                         macro_assignments, scaling_factors):
+def calculate_final_priorities_corrected(priorities_A, priorities_B, sottofattori,
+                                       macro_assignments, category_weights, scaling_factors):
     """
-    Apply scaling factors using diagonal matrix multiplication as requested
+    CORRECTED LOGIC: 
+    1. FIRST combine priorities with category weights (original formula)
+    2. THEN apply scaling factors based on category assignments (correction)
+    3. Normalize the result
+    """
+    # Step 1: Apply ORIGINAL formula to combine priorities with weights
+    combined_priorities = []
+    for i in range(len(priorities_A)):
+        combined_priority = (priorities_A[i] * category_weights['A'] + 
+                           priorities_B[i] * category_weights['B'])
+        combined_priorities.append(combined_priority)
     
-    This creates diagonal matrix M where M[i,i] = scaling_factor for the category 
-    that sub-factor i is assigned to, then applies: scaled_priorities = M * priorities
-    """
+    # Step 2: Apply scaling factors using diagonal matrix multiplication
     n_factors = len(sottofattori)
+    diagonal_matrix = np.zeros((n_factors, n_factors))
     
-    # Create diagonal scaling matrix for Category A priorities
-    diagonal_A = np.zeros((n_factors, n_factors))
     for i, sf in enumerate(sottofattori):
         category = macro_assignments.get(sf, 'None')
         if category == 'A':
-            diagonal_A[i, i] = scaling_factors['A']
+            diagonal_matrix[i, i] = scaling_factors['A']
         elif category == 'B':
-            diagonal_A[i, i] = scaling_factors['B'] 
+            diagonal_matrix[i, i] = scaling_factors['B']
         else:
-            diagonal_A[i, i] = 1.0  # No scaling for neutral factors
-    
-    # Create diagonal scaling matrix for Category B priorities
-    diagonal_B = np.zeros((n_factors, n_factors))
-    for i, sf in enumerate(sottofattori):
-        category = macro_assignments.get(sf, 'None')
-        if category == 'A':
-            diagonal_B[i, i] = scaling_factors['A']
-        elif category == 'B':
-            diagonal_B[i, i] = scaling_factors['B']
-        else:
-            diagonal_B[i, i] = 1.0  # No scaling for neutral factors
+            diagonal_matrix[i, i] = 1.0  # No scaling for unassigned factors
     
     # Apply diagonal matrix multiplication
-    priorities_A_array = np.array(priorities_A)
-    priorities_B_array = np.array(priorities_B)
+    combined_array = np.array(combined_priorities)
+    scaled_array = np.dot(diagonal_matrix, combined_array)
     
-    scaled_A_array = np.dot(diagonal_A, priorities_A_array)
-    scaled_B_array = np.dot(diagonal_B, priorities_B_array)
-    
-    return scaled_A_array.tolist(), scaled_B_array.tolist()
-
-
-def calculate_final_priorities_corrected(scaled_priorities_A, scaled_priorities_B, 
-                                       category_weights):
-    """
-    Apply the original formula after scaling
-    
-    This maintains the original logic: priA_norm[i] * peso_A + priB_norm[i] * peso_B
-    but with scaled priorities instead of raw ones.
-    """
-    final_priorities = []
-    
-    for i in range(len(scaled_priorities_A)):
-        final_priority = (scaled_priorities_A[i] * category_weights['A'] + 
-                         scaled_priorities_B[i] * category_weights['B'])
-        final_priorities.append(final_priority)
-    
-    # Normalize the final priorities
-    return normalize_vector(final_priorities)
+    # Step 3: Normalize the final result
+    return normalize_vector(scaled_array.tolist())
 
 
 def media_geometrica_custom(valori, pesi=None):
@@ -273,7 +248,7 @@ def create_radar_chart(df, title="Radar Chart"):
 def sensitivity_analysis_corrected(df_dlm, sottofattori, priorities_A, priorities_B, 
                                  macro_assignments, base_category_weights, base_scaling_factors):
     """
-    CORRECTED: Sensitivity analysis with proper scaling and weight combination
+    CORRECTED: Sensitivity analysis with proper sequence: combine weights first, then scale
     """
     st.header("📊 Sensitivity Analysis")
     
@@ -286,15 +261,10 @@ def sensitivity_analysis_corrected(df_dlm, sottofattori, priorities_A, prioritie
         peso_B = 1 - peso_A
         category_weights = {'A': peso_A, 'B': peso_B}
         
-        # Apply scaling factors first
-        scaled_priA, scaled_priB = apply_scaling_factors(
-            priorities_A, priorities_B, sottofattori, 
-            macro_assignments, base_scaling_factors
-        )
-        
-        # Then calculate final priorities with current weights
+        # Calculate final priorities with current weights using corrected logic
         final_priorities = calculate_final_priorities_corrected(
-            scaled_priA, scaled_priB, category_weights
+            priorities_A, priorities_B, sottofattori,
+            macro_assignments, category_weights, base_scaling_factors
         )
         
         # Calculate scores for each DLM
@@ -566,15 +536,10 @@ def main():
             priB = calculate_ahp_express_prior(base_index_B, final_ratios_B)
             priB_norm = normalize_vector(priB)
             
-            # CORRECTED: Apply scaling factors FIRST, then combine with weights
-            scaled_priA, scaled_priB = apply_scaling_factors(
-                priA_norm, priB_norm, sottofattori, 
-                macro_assignments, scaling_factors
-            )
-            
-            # Then apply the ORIGINAL formula with scaled priorities
+            # CORRECTED: Apply the correct sequence - FIRST combine with weights, THEN scale
             final_priorities = calculate_final_priorities_corrected(
-                scaled_priA, scaled_priB, category_weights
+                priA_norm, priB_norm, sottofattori,
+                macro_assignments, category_weights, scaling_factors
             )
             
             # Display priority vectors
@@ -813,44 +778,50 @@ def main():
             # Methodology note
             with st.expander("📚 Corrected Methodology Notes"):
                 st.markdown("""
-                ### Corrected AHP-Express with Macro-Category Scaling
+                ### CORRECTED AHP-Express with Macro-Category Scaling
                 
-                **The correction maintains the original logic but adds scaling BEFORE weight combination:**
+                **The corrected implementation follows this exact sequence:**
                 
-                **Step 1: Calculate Category Priorities**
+                **Step 1: Calculate Category Priorities (AHP-Express)**
                 - Category A priorities: priA_norm (from AHP-Express)
                 - Category B priorities: priB_norm (from AHP-Express)
                 
-                **Step 2: Apply Scaling Factors (CORRECTION)**
-                - Create diagonal matrix M where M[i,i] = scaling_factor for sub-factor i's category
-                - scaled_priA = M × priA_norm
-                - scaled_priB = M × priB_norm
+                **Step 2: Combine with Category Weights (ORIGINAL FORMULA)**
+                ```
+                combined_priorities[i] = priA_norm[i] × peso_A + priB_norm[i] × peso_B
+                ```
+                This is your ORIGINAL formula - here the category weights DO matter!
                 
-                **Step 3: Combine with Category Weights (ORIGINAL FORMULA)**
-                ```
-                final_priorities[i] = scaled_priA[i] × peso_A + scaled_priB[i] × peso_B
-                ```
+                **Step 3: Apply Scaling Factors (CORRECTION via Diagonal Matrix)**
+                - Create diagonal matrix M where M[i,i] = scaling_factor for the category of sub-factor i
+                - Apply: scaled_priorities = M × combined_priorities
                 
                 **Step 4: Normalize**
-                - Normalize final_priorities to sum = 1
+                ```
+                final_priorities = normalize(scaled_priorities)
+                ```
                 
-                **Key Distinction:**
-                - **Category Weight** (peso_A, peso_B): How important is each category overall
-                - **Scaling Factor**: How much to amplify/dampen priorities within each category
+                **Why this was wrong before:**
+                I was applying scaling to priA and priB SEPARATELY, which completely bypassed 
+                the category weight combination. The category weights (peso_A, peso_B) had no 
+                effect because they were applied to already-scaled vectors.
                 
-                **Why this correction was needed:**
-                The original formula combined priorities linearly, but didn't account for 
-                different scaling needs for different types of sub-factors. The diagonal 
-                matrix scaling allows non-linear transformation based on category assignment 
-                BEFORE the linear combination with category weights.
+                **Why this is correct now:**
+                1. Category weights control the RELATIVE IMPORTANCE of categories A vs B
+                2. Scaling factors control the AMPLIFICATION of sub-factors within their assigned category
+                3. The two effects are applied in the correct mathematical sequence
                 
                 **Mathematical representation:**
                 ```
-                M = diag[s1, s1, ..., s1, s2, s2, ..., s2, ...]  # scaling factors by category
-                scaled_A = M × priA_norm
-                scaled_B = M × priB_norm
-                final = normalize(scaled_A × peso_A + scaled_B × peso_B)
+                Step 1: combined[i] = priA[i] × peso_A + priB[i] × peso_B
+                Step 2: M = diag[s_cat[0], s_cat[1], ..., s_cat[n-1]]  # scaling by category assignment
+                Step 3: final = normalize(M × combined)
                 ```
+                
+                **Now when you change:**
+                - **peso_A/peso_B**: Changes the relative importance of categories → affects ranking
+                - **scaling_A/scaling_B**: Amplifies/dampens sub-factors in each category → affects ranking
+                - **Category assignments**: Changes which scaling factor applies to each sub-factor
                 """)
                 
                 # Show current parameter values
@@ -867,6 +838,12 @@ def main():
                 for cat, factors in assigned_factors.items():
                     if factors:
                         st.write(f"**Category {cat}:** {', '.join(factors)}")
+                
+                # Show what should happen when parameters change
+                st.subheader("Expected Effects of Parameter Changes")
+                st.write("✅ **Changing peso_A/peso_B should**: Shift ranking towards factors favored by A vs B priorities")
+                st.write("✅ **Changing scaling_A/scaling_B should**: Amplify/dampen factors assigned to that category")
+                st.write("✅ **Assigning factors to categories should**: Apply the respective scaling factor to those factors")
 
 
 if __name__ == "__main__":
