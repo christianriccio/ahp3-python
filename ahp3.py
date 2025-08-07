@@ -633,6 +633,11 @@ def main():
                         df_radar[sf] = 0.0
                 
                 create_radar_chart(df_radar, title="DLM Comparison across Sub-factors (Normalized)")
+
+
+            category_weights = {'A': peso_A, 'B': peso_B, 'None': 1.0}
+            scaling_factors  = {'A': peso_A, 'B': peso_B, 'None': 1.0}
+            neutral_weight   = 1.0
             
             with tab3:
                 # Show priority analysis
