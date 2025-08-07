@@ -121,19 +121,24 @@ def calculate_ahp_express_prior(base_index, values):
 
 
 def calculate_final_priorities_corrected(priorities_A, priorities_B, sottofattori,
-                                       macro_assignments, category_weights, scaling_factors):
+                                       macro_assignments, scaling_factors):
     """
-    CORRECTED LOGIC: 
-    1. FIRST combine priorities with category weights (original formula)
-    2. THEN apply scaling factors based on category assignments (correction)
+    CORRECTED LOGIC: peso_A e peso_B SONO gli scaling factors!
+    
+    1. Start with a base priority vector (combination or choice of A/B priorities)
+    2. Apply scaling factors via diagonal matrix based on category assignments
     3. Normalize the result
+    
+    scaling_factors contains: {'A': peso_A, 'B': peso_B}
     """
-    # Step 1: Apply ORIGINAL formula to combine priorities with weights
-    combined_priorities = []
+    # Step 1: Create base priority vector 
+    # For simplicity, we can use average of A and B priorities as base
+    # (or use A priorities, or B priorities - the scaling will differentiate)
+    base_priorities = []
     for i in range(len(priorities_A)):
-        combined_priority = (priorities_A[i] * category_weights['A'] + 
-                           priorities_B[i] * category_weights['B'])
-        combined_priorities.append(combined_priority)
+        # Use average as base - scaling will make the difference
+        base_priority = (priorities_A[i] + priorities_B[i]) / 2
+        base_priorities.append(base_priority)
     
     # Step 2: Apply scaling factors using diagonal matrix multiplication
     n_factors = len(sottofattori)
@@ -142,15 +147,15 @@ def calculate_final_priorities_corrected(priorities_A, priorities_B, sottofattor
     for i, sf in enumerate(sottofattori):
         category = macro_assignments.get(sf, 'None')
         if category == 'A':
-            diagonal_matrix[i, i] = scaling_factors['A']
+            diagonal_matrix[i, i] = scaling_factors['A']  # peso_A is the scaling factor
         elif category == 'B':
-            diagonal_matrix[i, i] = scaling_factors['B']
+            diagonal_matrix[i, i] = scaling_factors['B']  # peso_B is the scaling factor
         else:
             diagonal_matrix[i, i] = 1.0  # No scaling for unassigned factors
     
     # Apply diagonal matrix multiplication
-    combined_array = np.array(combined_priorities)
-    scaled_array = np.dot(diagonal_matrix, combined_array)
+    base_array = np.array(base_priorities)
+    scaled_array = np.dot(diagonal_matrix, base_array)
     
     # Step 3: Normalize the final result
     return normalize_vector(scaled_array.tolist())
@@ -246,25 +251,24 @@ def create_radar_chart(df, title="Radar Chart"):
 
 
 def sensitivity_analysis_corrected(df_dlm, sottofattori, priorities_A, priorities_B, 
-                                 macro_assignments, base_category_weights, base_scaling_factors):
+                                 macro_assignments, current_peso_A, current_peso_B):
     """
-    CORRECTED: Sensitivity analysis with proper sequence: combine weights first, then scale
+    CORRECTED: Sensitivity analysis where peso_A and peso_B are the scaling factors
     """
     st.header("📊 Sensitivity Analysis")
     
-    # Create variations for category weights
-    peso_A_values = np.linspace(0, 1, 21)
+    # Create variations for scaling factor A
+    peso_A_values = np.linspace(0.1, 3.0, 21)
     sensitivity_scores = {dlm: [] for dlm in df_dlm[df_dlm.columns[0]].tolist()}
     
-    # Test different category weight combinations
+    # Test different scaling factor combinations (keeping B constant)
     for peso_A in peso_A_values:
-        peso_B = 1 - peso_A
-        category_weights = {'A': peso_A, 'B': peso_B}
+        scaling_factors = {'A': peso_A, 'B': current_peso_B}
         
-        # Calculate final priorities with current weights using corrected logic
+        # Calculate final priorities with current scaling factors
         final_priorities = calculate_final_priorities_corrected(
             priorities_A, priorities_B, sottofattori,
-            macro_assignments, category_weights, base_scaling_factors
+            macro_assignments, scaling_factors
         )
         
         # Calculate scores for each DLM
@@ -275,7 +279,7 @@ def sensitivity_analysis_corrected(df_dlm, sottofattori, priorities_A, prioritie
     
     # Create DataFrame for sensitivity analysis
     df_sens = pd.DataFrame(sensitivity_scores, index=peso_A_values)
-    df_sens.index.name = "Category A Weight"
+    df_sens.index.name = "Category A Scaling Factor"
     
     # Plot sensitivity analysis
     fig, ax = plt.subplots(figsize=(12, 7))
@@ -285,16 +289,15 @@ def sensitivity_analysis_corrected(df_dlm, sottofattori, priorities_A, prioritie
         ax.plot(df_sens.index, df_sens[dlm], marker='o', label=dlm, 
                 linewidth=2, markersize=4, color=colors[idx])
     
-    ax.set_xlabel("Weight of Category A", fontsize=12)
+    ax.set_xlabel("Scaling Factor for Category A", fontsize=12)
     ax.set_ylabel("DLM Score", fontsize=12)
-    ax.set_title("Sensitivity of DLM Scores to Category A Weight", fontsize=14, fontweight='bold')
+    ax.set_title("Sensitivity of DLM Scores to Category A Scaling Factor", fontsize=14, fontweight='bold')
     ax.grid(True, alpha=0.3)
     ax.legend(loc='best')
     
-    # Add vertical line at current weight
-    current_weight = base_category_weights['A']
-    ax.axvline(x=current_weight, color='red', linestyle='--', alpha=0.5, 
-               label=f'Current weight ({current_weight:.2f})')
+    # Add vertical line at current scaling factor
+    ax.axvline(x=current_peso_A, color='red', linestyle='--', alpha=0.5, 
+               label=f'Current scaling A ({current_peso_A:.2f})')
     
     plt.tight_layout()
     st.pyplot(fig)
@@ -368,7 +371,7 @@ def main():
                                       help="If enabled, you can assign sub-factors to categories A/B and set weights/scaling")
     
     if use_macro_categories:
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Category Assignments")
@@ -380,39 +383,24 @@ def main():
                     f"{sf}",
                     options=['None', 'A', 'B'],
                     key=f"macro_{sf}",
-                    help=f"Select category for {sf} (None = neutral)"
+                    help=f"Select category for {sf} (None = no scaling applied)"
                 )
         
         with col2:
-            st.subheader("Category Weights")
-            st.write("Set importance weights for each category:")
+            st.subheader("Macro-Category Scaling Factors")
+            st.write("Set scaling factors for each macro-category:")
+            st.info("These values scale the priorities of sub-factors assigned to each category")
             
             peso_A = st.slider(
-                "Weight for Category A",
-                min_value=0.0, max_value=1.0, value=0.5, step=0.01,
-                help="How important is Category A in the final decision"
-            )
-            peso_B = 1 - peso_A
-            st.write(f"Weight for Category B: {peso_B:.2f}")
-            
-            category_weights = {'A': peso_A, 'B': peso_B}
-        
-        with col3:
-            st.subheader("Scaling Factors")
-            st.write("Set scaling multipliers for each category:")
-            
-            scaling_A = st.slider(
                 "Scaling Factor for Category A",
                 min_value=0.1, max_value=3.0, value=1.0, step=0.1,
-                help="Multiplier applied to sub-factors assigned to Category A"
+                help="Scaling factor applied to sub-factors assigned to Category A (>1 amplifies, <1 reduces importance)"
             )
-            scaling_B = st.slider(
-                "Scaling Factor for Category B", 
+            peso_B = st.slider(
+                "Scaling Factor for Category B",
                 min_value=0.1, max_value=3.0, value=1.0, step=0.1,
-                help="Multiplier applied to sub-factors assigned to Category B"
+                help="Scaling factor applied to sub-factors assigned to Category B (>1 amplifies, <1 reduces importance)"
             )
-            
-            scaling_factors = {'A': scaling_A, 'B': scaling_B}
         
         # Display category summary
         st.subheader("📋 Category Configuration Summary")
@@ -425,19 +413,20 @@ def main():
         
         for cat_name, factors in categories_summary.items():
             if factors:
-                if cat_name in ['A', 'B']:
-                    weight = category_weights[cat_name]
-                    scaling = scaling_factors[cat_name]
-                    st.write(f"**Category {cat_name}** (Weight: {weight:.2f}, Scaling: {scaling:.1f}): {', '.join(factors)}")
+                if cat_name == 'A':
+                    scaling = peso_A
+                    st.write(f"**Category {cat_name}** (Scaling Factor: {scaling:.2f}): {', '.join(factors)}")
+                elif cat_name == 'B':
+                    scaling = peso_B
+                    st.write(f"**Category {cat_name}** (Scaling Factor: {scaling:.2f}): {', '.join(factors)}")
                 else:
-                    st.write(f"**{cat_name}** (No specific scaling): {', '.join(factors)}")
+                    st.write(f"**{cat_name}** (No scaling applied): {', '.join(factors)}")
     
     else:
-        # Default: no macro-categories, all factors treated equally
+        # Default: no macro-categories, all factors treated equally (no scaling)
         macro_assignments = {sf: 'None' for sf in sottofattori}
-        category_weights = {'A': 0.5, 'B': 0.5}
-        scaling_factors = {'A': 1.0, 'B': 1.0}
-        st.info("Macro-category system disabled. All sub-factors will be treated equally.")
+        peso_A, peso_B = 1.0, 1.0  # No scaling when disabled
+        st.info("Macro-category system disabled. All sub-factors will be treated equally (no scaling applied).")
     
     # Step 3: Configure interviews
     st.header("3. 🎤 Configure Interviews")
@@ -536,10 +525,10 @@ def main():
             priB = calculate_ahp_express_prior(base_index_B, final_ratios_B)
             priB_norm = normalize_vector(priB)
             
-            # CORRECTED: Apply the correct sequence - FIRST combine with weights, THEN scale
+            # CORRECTED: peso_A and peso_B ARE the scaling factors
             final_priorities = calculate_final_priorities_corrected(
                 priA_norm, priB_norm, sottofattori,
-                macro_assignments, category_weights, scaling_factors
+                macro_assignments, {'A': peso_A, 'B': peso_B}
             )
             
             # Display priority vectors
@@ -566,29 +555,21 @@ def main():
                 st.dataframe(df_priB.style.format({"Priority": "{:.4f}"}))
             
             with col3:
-                st.write("**Final Combined Priorities**")
-                
-                # Show the effect of scaling
-                scaled_display = []
-                for i, sf in enumerate(sottofattori):
-                    category = macro_assignments[sf]
-                    if category == 'A':
-                        scaling_applied = scaling_factors['A']
-                    elif category == 'B':
-                        scaling_applied = scaling_factors['B']
-                    else:
-                        scaling_applied = 1.0
-                    scaled_display.append(scaling_applied)
+                st.write("**Final Scaled Priorities**")
                 
                 df_final = pd.DataFrame({
                     "Sub-factor": sottofattori, 
                     "Final Priority": final_priorities,
                     "Category": [macro_assignments[sf] for sf in sottofattori],
-                    "Scaling Applied": scaled_display
+                    "Scaling Applied": [
+                        peso_A if macro_assignments[sf] == 'A' 
+                        else peso_B if macro_assignments[sf] == 'B'
+                        else 1.0 for sf in sottofattori
+                    ]
                 })
                 st.dataframe(df_final.style.format({
                     "Final Priority": "{:.4f}",
-                    "Scaling Applied": "{:.1f}"
+                    "Scaling Applied": "{:.2f}"
                 }))
             
             # Calculate DLM scores
@@ -741,7 +722,7 @@ def main():
             # Sensitivity Analysis
             if use_macro_categories:
                 sensitivity_analysis_corrected(df_dlm, sottofattori, priA_norm, priB_norm, 
-                                              macro_assignments, category_weights, scaling_factors)
+                                              macro_assignments, peso_A, peso_B)
             
             # Export results
             st.subheader("💾 Export Results")
@@ -776,58 +757,67 @@ def main():
                 )
             
             # Methodology note
-            with st.expander("📚 Corrected Methodology Notes"):
+            with st.expander("📚 CORRECTED Methodology Notes"):
                 st.markdown("""
                 ### CORRECTED AHP-Express with Macro-Category Scaling
                 
-                **The corrected implementation follows this exact sequence:**
+                **KEY INSIGHT: peso_A and peso_B ARE the scaling factors from the original correction!**
+                
+                **The corrected implementation follows this sequence:**
                 
                 **Step 1: Calculate Category Priorities (AHP-Express)**
-                - Category A priorities: priA_norm (from AHP-Express)
-                - Category B priorities: priB_norm (from AHP-Express)
+                - Category A priorities: priA_norm (from AHP-Express comparisons)
+                - Category B priorities: priB_norm (from AHP-Express comparisons)
                 
-                **Step 2: Combine with Category Weights (ORIGINAL FORMULA)**
-                ```
-                combined_priorities[i] = priA_norm[i] × peso_A + priB_norm[i] × peso_B
-                ```
-                This is your ORIGINAL formula - here the category weights DO matter!
+                **Step 2: Create Base Priority Vector**
+                - Use average of A and B priorities: base[i] = (priA_norm[i] + priB_norm[i]) / 2
+                - (Alternative: could use just A or just B priorities as base)
                 
-                **Step 3: Apply Scaling Factors (CORRECTION via Diagonal Matrix)**
-                - Create diagonal matrix M where M[i,i] = scaling_factor for the category of sub-factor i
-                - Apply: scaled_priorities = M × combined_priorities
+                **Step 3: Apply Scaling Factors via Diagonal Matrix (THE CORRECTION)**
+                - Create diagonal matrix M where M[i,i] = scaling factor for sub-factor i's category
+                - For sub-factor assigned to Category A: M[i,i] = peso_A  
+                - For sub-factor assigned to Category B: M[i,i] = peso_B
+                - For unassigned sub-factor: M[i,i] = 1.0 (no scaling)
+                - Apply: scaled_priorities = M × base_priorities
                 
                 **Step 4: Normalize**
                 ```
                 final_priorities = normalize(scaled_priorities)
                 ```
                 
-                **Why this was wrong before:**
-                I was applying scaling to priA and priB SEPARATELY, which completely bypassed 
-                the category weight combination. The category weights (peso_A, peso_B) had no 
-                effect because they were applied to already-scaled vectors.
+                **This matches exactly your original correction request:**
+                > "Il vettore dei pesi v_i va scalato in maniera non lineare a seconda della macrocategoria... 
+                > AHP va applicato non al vettore dei pesi come sta, ma al prodotto tra una matrice diagonale M 
+                > che contiene s1, s2, s3... e il vettore dei pesi."
                 
-                **Why this is correct now:**
-                1. Category weights control the RELATIVE IMPORTANCE of categories A vs B
-                2. Scaling factors control the AMPLIFICATION of sub-factors within their assigned category
-                3. The two effects are applied in the correct mathematical sequence
+                Where:
+                - s1 = peso_A (scaling factor for Category A)
+                - s2 = peso_B (scaling factor for Category B)
+                - M is the diagonal matrix with these scaling factors
                 
                 **Mathematical representation:**
                 ```
-                Step 1: combined[i] = priA[i] × peso_A + priB[i] × peso_B
-                Step 2: M = diag[s_cat[0], s_cat[1], ..., s_cat[n-1]]  # scaling by category assignment
-                Step 3: final = normalize(M × combined)
+                base = (priA + priB) / 2
+                M = diag[peso_cat[0], peso_cat[1], ..., peso_cat[n-1]]  # scaling by category assignment
+                final = normalize(M × base)
                 ```
                 
-                **Now when you change:**
-                - **peso_A/peso_B**: Changes the relative importance of categories → affects ranking
-                - **scaling_A/scaling_B**: Amplifies/dampens sub-factors in each category → affects ranking
-                - **Category assignments**: Changes which scaling factor applies to each sub-factor
+                **Effects of parameter changes:**
+                - **peso_A > 1**: Amplifies importance of sub-factors assigned to Category A
+                - **peso_A < 1**: Reduces importance of sub-factors assigned to Category A
+                - **peso_B > 1**: Amplifies importance of sub-factors assigned to Category B  
+                - **peso_B < 1**: Reduces importance of sub-factors assigned to Category B
+                - **Category assignment changes**: Applies different scaling factors to sub-factors
+                
+                **Why the previous approaches were wrong:**
+                - I was treating peso_A/peso_B as combination weights, not as scaling factors
+                - The scaling factors (peso_A, peso_B) ARE the correction, not an addition to weights
+                - No separate "category weights" and "scaling factors" - they are the same thing!
                 """)
                 
                 # Show current parameter values
                 st.subheader("Current Configuration")
-                st.write(f"**Category Weights:** A={category_weights['A']:.2f}, B={category_weights['B']:.2f}")
-                st.write(f"**Scaling Factors:** A={scaling_factors['A']:.1f}, B={scaling_factors['B']:.1f}")
+                st.write(f"**Scaling Factors:** A={peso_A:.2f}, B={peso_B:.2f}")
                 
                 assigned_factors = {
                     'A': [sf for sf, cat in macro_assignments.items() if cat == 'A'],
@@ -837,13 +827,21 @@ def main():
                 
                 for cat, factors in assigned_factors.items():
                     if factors:
-                        st.write(f"**Category {cat}:** {', '.join(factors)}")
+                        if cat == 'A':
+                            st.write(f"**Category {cat}** (Scaled by {peso_A:.2f}): {', '.join(factors)}")
+                        elif cat == 'B':
+                            st.write(f"**Category {cat}** (Scaled by {peso_B:.2f}): {', '.join(factors)}")
+                        else:
+                            st.write(f"**{cat}** (No scaling): {', '.join(factors)}")
                 
                 # Show what should happen when parameters change
                 st.subheader("Expected Effects of Parameter Changes")
-                st.write("✅ **Changing peso_A/peso_B should**: Shift ranking towards factors favored by A vs B priorities")
-                st.write("✅ **Changing scaling_A/scaling_B should**: Amplify/dampen factors assigned to that category")
-                st.write("✅ **Assigning factors to categories should**: Apply the respective scaling factor to those factors")
+                st.write("✅ **Changing peso_A**: Directly scales all factors assigned to Category A")
+                st.write("✅ **Changing peso_B**: Directly scales all factors assigned to Category B")
+                st.write("✅ **Assigning factors to categories**: Changes which scaling factor applies to each factor")
+                st.write("✅ **Setting peso_A=peso_B=1.0**: No scaling effect (equivalent to original AHP-Express)")
+                
+                st.info("💡 **Key insight**: peso_A and peso_B are the s1, s2 scaling factors from your original correction formula!")
 
 
 if __name__ == "__main__":
