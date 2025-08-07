@@ -100,7 +100,7 @@ def normalize_vector(v):
 
 def calculate_ahp_express_prior(base_index, values):
     """
-    CORRECTED: This function calculates the priority vector according to AHP-express
+    This function calculates the priority vector according to AHP-express
     The correct formula for AHP-express is:
     - For the base element: pr_base = 1 / Σ_k (1/a(base,k))
     - For other elements j: pr_j = (1/a(base,j)) / Σ_k (1/a(base,k))
@@ -123,8 +123,6 @@ def calculate_ahp_express_prior(base_index, values):
 def calculate_final_priorities_corrected(priorities_A, priorities_B, sottofattori,
                                        macro_assignments, scaling_factors):
     """
-    CORRECTED LOGIC: peso_A e peso_B SONO gli scaling factors!
-    
     1. Start with a base priority vector (combination or choice of A/B priorities)
     2. Apply scaling factors via diagonal matrix based on category assignments
     3. Normalize the result
@@ -764,7 +762,7 @@ def main():
             # Methodology note
             with st.expander("📚 CORRECTED Methodology Notes"):
                 st.markdown("""
-                ### CORRECTED AHP-Express with Macro-Category Scaling
+                ### AHP-Express with Macro-Category Scaling
                 
                 **KEY INSIGHT: peso_A and peso_B ARE the scaling factors from the original correction!**
                 
@@ -839,15 +837,7 @@ def main():
                         else:
                             st.write(f"**{cat}** (No scaling): {', '.join(factors)}")
                 
-                # Show what should happen when parameters change
-                st.subheader("Expected Effects of Parameter Changes")
-                st.write("✅ **Changing peso_A**: Directly scales all factors assigned to Category A")
-                st.write("✅ **Changing peso_B**: Directly scales all factors assigned to Category B")
-                st.write("✅ **Assigning factors to categories**: Changes which scaling factor applies to each factor")
-                st.write("✅ **Setting peso_A=peso_B=1.0**: No scaling effect (equivalent to original AHP-Express)")
                 
-                st.info("💡 **Key insight**: peso_A and peso_B are the s1, s2 scaling factors from your original correction formula!")
-
 
 if __name__ == "__main__":
     main()
